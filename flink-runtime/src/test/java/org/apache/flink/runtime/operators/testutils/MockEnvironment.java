@@ -29,22 +29,25 @@ import org.apache.flink.runtime.checkpoint.CheckpointMetrics;
 import org.apache.flink.runtime.checkpoint.TaskStateSnapshot;
 import org.apache.flink.runtime.execution.Environment;
 import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
+import org.apache.flink.runtime.externalresource.ExternalResourceInfoProvider;
 import org.apache.flink.runtime.io.disk.iomanager.IOManager;
-import org.apache.flink.runtime.io.disk.iomanager.IOManagerAsync;
 import org.apache.flink.runtime.io.network.TaskEventDispatcher;
 import org.apache.flink.runtime.io.network.api.writer.RecordCollectingResultPartitionWriter;
 import org.apache.flink.runtime.io.network.api.writer.ResultPartitionWriter;
+import org.apache.flink.runtime.io.network.partition.consumer.IndexedInputGate;
 import org.apache.flink.runtime.io.network.partition.consumer.InputGate;
 import org.apache.flink.runtime.io.network.partition.consumer.IteratorWrappingTestSingleInputGate;
 import org.apache.flink.runtime.io.network.util.TestPooledBufferProvider;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.jobgraph.tasks.InputSplitProvider;
+import org.apache.flink.runtime.jobgraph.tasks.TaskOperatorEventGateway;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.metrics.groups.TaskMetricGroup;
 import org.apache.flink.runtime.query.KvStateRegistry;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
 import org.apache.flink.runtime.state.TaskStateManager;
 import org.apache.flink.runtime.taskexecutor.GlobalAggregateManager;
+import org.apache.flink.runtime.taskmanager.NoOpTaskOperatorEventGateway;
 import org.apache.flink.runtime.taskmanager.TaskManagerRuntimeInfo;
 import org.apache.flink.types.Record;
 import org.apache.flink.util.MutableObjectIterator;
@@ -85,7 +88,7 @@ public class MockEnvironment implements Environment, AutoCloseable {
 
 	private final Configuration taskConfiguration;
 
-	private final List<InputGate> inputs;
+	private final List<IndexedInputGate> inputs;
 
 	private final List<ResultPartitionWriter> outputs;
 
@@ -99,7 +102,9 @@ public class MockEnvironment implements Environment, AutoCloseable {
 
 	private final AccumulatorRegistry accumulatorRegistry;
 
-	private final TaskKvStateRegistry kvStateRegistry;
+	private final TaskKvStateRegistry taskKvStateRegistry;
+
+	private final KvStateRegistry kvStateRegistry;
 
 	private final int bufferSize;
 
@@ -113,27 +118,31 @@ public class MockEnvironment implements Environment, AutoCloseable {
 
 	private final TaskMetricGroup taskMetricGroup;
 
+	private final ExternalResourceInfoProvider externalResourceInfoProvider;
+
 	public static MockEnvironmentBuilder builder() {
 		return new MockEnvironmentBuilder();
 	}
 
 	protected MockEnvironment(
-		JobID jobID,
-		JobVertexID jobVertexID,
-		String taskName,
-		long memorySize,
-		MockInputSplitProvider inputSplitProvider,
-		int bufferSize,
-		Configuration taskConfiguration,
-		ExecutionConfig executionConfig,
-		TaskStateManager taskStateManager,
-		GlobalAggregateManager aggregateManager,
-		int maxParallelism,
-		int parallelism,
-		int subtaskIndex,
-		ClassLoader userCodeClassLoader,
-		TaskMetricGroup taskMetricGroup,
-		TaskManagerRuntimeInfo taskManagerRuntimeInfo) {
+			JobID jobID,
+			JobVertexID jobVertexID,
+			String taskName,
+			MockInputSplitProvider inputSplitProvider,
+			int bufferSize,
+			Configuration taskConfiguration,
+			ExecutionConfig executionConfig,
+			IOManager ioManager,
+			TaskStateManager taskStateManager,
+			GlobalAggregateManager aggregateManager,
+			int maxParallelism,
+			int parallelism,
+			int subtaskIndex,
+			ClassLoader userCodeClassLoader,
+			TaskMetricGroup taskMetricGroup,
+			TaskManagerRuntimeInfo taskManagerRuntimeInfo,
+			MemoryManager memManager,
+			ExternalResourceInfoProvider externalResourceInfoProvider) {
 
 		this.jobID = jobID;
 		this.jobVertexID = jobVertexID;
@@ -141,11 +150,11 @@ public class MockEnvironment implements Environment, AutoCloseable {
 		this.taskInfo = new TaskInfo(taskName, maxParallelism, subtaskIndex, parallelism, 0);
 		this.jobConfiguration = new Configuration();
 		this.taskConfiguration = taskConfiguration;
-		this.inputs = new LinkedList<InputGate>();
+		this.inputs = new LinkedList<>();
 		this.outputs = new LinkedList<ResultPartitionWriter>();
 
-		this.memManager = new MemoryManager(memorySize, 1);
-		this.ioManager = new IOManagerAsync();
+		this.memManager = memManager;
+		this.ioManager = ioManager;
 		this.taskManagerRuntimeInfo = taskManagerRuntimeInfo;
 
 		this.executionConfig = executionConfig;
@@ -154,19 +163,24 @@ public class MockEnvironment implements Environment, AutoCloseable {
 
 		this.accumulatorRegistry = new AccumulatorRegistry(jobID, getExecutionId());
 
-		KvStateRegistry registry = new KvStateRegistry();
-		this.kvStateRegistry = registry.createTaskRegistry(jobID, getJobVertexId());
+		this.kvStateRegistry = new KvStateRegistry();
+		this.taskKvStateRegistry = kvStateRegistry.createTaskRegistry(jobID, getJobVertexId());
 
 		this.userCodeClassLoader = Preconditions.checkNotNull(userCodeClassLoader);
 		this.taskStateManager = Preconditions.checkNotNull(taskStateManager);
 		this.aggregateManager = Preconditions.checkNotNull(aggregateManager);
 
 		this.taskMetricGroup = taskMetricGroup;
+
+		this.externalResourceInfoProvider = Preconditions.checkNotNull(externalResourceInfoProvider);
 	}
 
 	public IteratorWrappingTestSingleInputGate<Record> addInput(MutableObjectIterator<Record> inputIterator) {
 		try {
-			final IteratorWrappingTestSingleInputGate<Record> reader = new IteratorWrappingTestSingleInputGate<Record>(bufferSize, Record.class, inputIterator);
+			final IteratorWrappingTestSingleInputGate<Record> reader = new IteratorWrappingTestSingleInputGate<Record>(bufferSize,
+				inputs.size(),
+				inputIterator,
+				Record.class);
 
 			inputs.add(reader.getInputGate());
 
@@ -177,6 +191,10 @@ public class MockEnvironment implements Environment, AutoCloseable {
 		}
 	}
 
+	public void addInputs(List<IndexedInputGate> gates) {
+		inputs.addAll(gates);
+	}
+
 	public void addOutput(final List<Record> outputList) {
 		try {
 			outputs.add(new RecordCollectingResultPartitionWriter(outputList, new TestPooledBufferProvider(Integer.MAX_VALUE)));
@@ -185,6 +203,10 @@ public class MockEnvironment implements Environment, AutoCloseable {
 			t.printStackTrace();
 			fail(t.getMessage());
 		}
+	}
+
+	public void addOutputs(List<ResultPartitionWriter> writers) {
+		outputs.addAll(writers);
 	}
 
 	@Override
@@ -237,6 +259,10 @@ public class MockEnvironment implements Environment, AutoCloseable {
 		return taskInfo;
 	}
 
+	public KvStateRegistry getKvStateRegistry() {
+		return kvStateRegistry;
+	}
+
 	@Override
 	public ClassLoader getUserClassLoader() {
 		return userCodeClassLoader;
@@ -258,15 +284,13 @@ public class MockEnvironment implements Environment, AutoCloseable {
 	}
 
 	@Override
-	public InputGate getInputGate(int index) {
+	public IndexedInputGate getInputGate(int index) {
 		return inputs.get(index);
 	}
 
 	@Override
-	public InputGate[] getAllInputGates() {
-		InputGate[] gates = new InputGate[inputs.size()];
-		inputs.toArray(gates);
-		return gates;
+	public IndexedInputGate[] getAllInputGates() {
+		return inputs.toArray(new IndexedInputGate[0]);
 	}
 
 	@Override
@@ -306,7 +330,12 @@ public class MockEnvironment implements Environment, AutoCloseable {
 
 	@Override
 	public TaskKvStateRegistry getTaskKvStateRegistry() {
-		return kvStateRegistry;
+		return taskKvStateRegistry;
+	}
+
+	@Override
+	public ExternalResourceInfoProvider getExternalResourceInfoProvider() {
+		return externalResourceInfoProvider;
 	}
 
 	@Override
@@ -321,7 +350,12 @@ public class MockEnvironment implements Environment, AutoCloseable {
 
 	@Override
 	public void declineCheckpoint(long checkpointId, Throwable cause) {
-		throw new UnsupportedOperationException();
+		throw new UnsupportedOperationException(cause);
+	}
+
+	@Override
+	public TaskOperatorEventGateway getOperatorCoordinatorEventGateway() {
+		return new NoOpTaskOperatorEventGateway();
 	}
 
 	@Override

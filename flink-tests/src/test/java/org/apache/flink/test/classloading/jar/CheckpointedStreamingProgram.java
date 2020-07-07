@@ -42,8 +42,7 @@ public class CheckpointedStreamingProgram {
 	public static void main(String[] args) throws Exception {
 		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-		env.getConfig().disableSysoutLogging();
-		env.enableCheckpointing(CHECKPOINT_INTERVALL);
+				env.enableCheckpointing(CHECKPOINT_INTERVALL);
 		env.setRestartStrategy(RestartStrategies.fixedDelayRestart(1, 100L));
 		env.disableOperatorChaining();
 
@@ -123,6 +122,10 @@ public class CheckpointedStreamingProgram {
 		@Override
 		public void notifyCheckpointComplete(long checkpointId) throws Exception {
 			atLeastOneSnapshotComplete = true;
+		}
+
+		@Override
+		public void notifyCheckpointAborted(long checkpointId) {
 		}
 	}
 	// --------------------------------------------------------------------------------------------

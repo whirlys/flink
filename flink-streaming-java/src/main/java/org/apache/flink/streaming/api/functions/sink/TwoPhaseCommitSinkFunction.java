@@ -271,7 +271,6 @@ public abstract class TwoPhaseCommitSinkFunction<IN, TXN, CONTEXT>
 		//
 
 		Iterator<Map.Entry<Long, TransactionHolder<TXN>>> pendingTransactionIterator = pendingCommitTransactions.entrySet().iterator();
-		checkState(pendingTransactionIterator.hasNext(), "checkpoint completed, but no transaction pending");
 		Throwable firstError = null;
 
 		while (pendingTransactionIterator.hasNext()) {
@@ -303,6 +302,10 @@ public abstract class TwoPhaseCommitSinkFunction<IN, TXN, CONTEXT>
 			throw new FlinkRuntimeException("Committing one of transactions failed, logging first encountered failure",
 				firstError);
 		}
+	}
+
+	@Override
+	public void notifyCheckpointAborted(long checkpointId) {
 	}
 
 	@Override
@@ -485,7 +488,7 @@ public abstract class TwoPhaseCommitSinkFunction<IN, TXN, CONTEXT>
 		return String.format(
 			"%s %s/%s",
 			this.getClass().getSimpleName(),
-			getRuntimeContext().getIndexOfThisSubtask(),
+			getRuntimeContext().getIndexOfThisSubtask() + 1,
 			getRuntimeContext().getNumberOfParallelSubtasks());
 	}
 

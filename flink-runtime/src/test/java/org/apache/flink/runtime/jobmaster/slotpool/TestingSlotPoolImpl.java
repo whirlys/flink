@@ -22,14 +22,22 @@ import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.configuration.JobManagerOptions;
 import org.apache.flink.runtime.akka.AkkaUtils;
-import org.apache.flink.runtime.util.clock.Clock;
-import org.apache.flink.runtime.util.clock.SystemClock;
+import org.apache.flink.runtime.clusterframework.types.ResourceProfile;
+import org.apache.flink.runtime.jobmaster.SlotRequestId;
+import org.apache.flink.util.clock.Clock;
+import org.apache.flink.util.clock.SystemClock;
+
+import javax.annotation.Nullable;
+
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Testing extension of the {@link SlotPoolImpl} which adds additional methods
  * for testing.
  */
 public class TestingSlotPoolImpl extends SlotPoolImpl {
+
+	private ResourceProfile lastRequestedSlotResourceProfile;
 
 	public TestingSlotPoolImpl(JobID jobId) {
 		this(
@@ -55,5 +63,24 @@ public class TestingSlotPoolImpl extends SlotPoolImpl {
 
 	void triggerCheckBatchSlotTimeout() {
 		runAsync(this::checkBatchSlotTimeout);
+	}
+
+	boolean isBatchSlotRequestTimeoutCheckEnabled() {
+		return batchSlotRequestTimeoutCheckEnabled;
+	}
+
+	@Override
+	public CompletableFuture<PhysicalSlot> requestNewAllocatedSlot(
+			final SlotRequestId slotRequestId,
+			final ResourceProfile resourceProfile,
+			@Nullable final Time timeout) {
+
+		this.lastRequestedSlotResourceProfile = resourceProfile;
+
+		return super.requestNewAllocatedSlot(slotRequestId, resourceProfile, timeout);
+	}
+
+	public ResourceProfile getLastRequestedSlotResourceProfile() {
+		return lastRequestedSlotResourceProfile;
 	}
 }

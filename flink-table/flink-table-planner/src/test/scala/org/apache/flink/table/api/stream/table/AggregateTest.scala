@@ -20,11 +20,11 @@ package org.apache.flink.table.api.stream.table
 
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.{Session, Slide, Tumble}
-import org.apache.flink.table.api.scala._
+import org.apache.flink.table.api._
 import org.apache.flink.table.runtime.utils.JavaUserDefinedAggFunctions.WeightedAvg
-import org.apache.flink.table.utils.{CountMinMax, TableTestBase}
 import org.apache.flink.table.utils.TableTestUtil._
+import org.apache.flink.table.utils.{CountMinMax, TableTestBase}
+
 import org.junit.Test
 
 class AggregateTest extends TableTestBase {
@@ -283,7 +283,7 @@ class AggregateTest extends TableTestBase {
       ),
       term("window", "SlidingGroupWindow('w, 'rowtime, 3600000.millis, 900000.millis)"),
       term("select", "COUNT(DISTINCT a) AS EXPR$0", "SUM(DISTINCT a) AS EXPR$1",
-           "MAX(DISTINCT a) AS EXPR$2")
+           "MAX(a) AS EXPR$2")
     )
 
     util.verifyTable(result, expected)

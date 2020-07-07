@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
+import warnings
 
 from py4j.java_gateway import java_import
 
@@ -618,12 +619,30 @@ class CatalogBaseTable(object):
     def _get(j_catalog_base_table):
         return CatalogBaseTable(j_catalog_base_table)
 
+    def get_options(self):
+        """
+        Returns a map of string-based options.
+
+        In case of CatalogTable, these options may determine the kind of connector and its
+        configuration for accessing the data in the external system.
+
+        :return: Property map of the table/view.
+
+        .. versionadded:: 1.11.0
+        """
+        return dict(self._j_catalog_base_table.getOptions())
+
     def get_properties(self):
         """
         Get the properties of the table.
 
         :return: Property map of the table/view.
+
+        .. note:: This method is deprecated. Use :func:`~pyflink.table.CatalogBaseTable.get_options`
+                  instead.
         """
+        warnings.warn("Deprecated in 1.11. Use CatalogBaseTable#get_options instead.",
+                      DeprecationWarning)
         return dict(self._j_catalog_base_table.getProperties())
 
     def get_schema(self):
@@ -757,14 +776,6 @@ class CatalogFunction(object):
         """
         return self._j_catalog_function.getClassName()
 
-    def get_properties(self):
-        """
-        Get the properties of the function.
-
-        :return: The properties of the function.
-        """
-        return dict(self._j_catalog_function.getProperties())
-
     def copy(self):
         """
         Create a deep copy of the function.
@@ -796,6 +807,26 @@ class CatalogFunction(object):
             return detailed_description.get()
         else:
             return None
+
+    def is_generic(self):
+        """
+        Whether or not is the function a flink UDF.
+
+        :return: Whether is the function a flink UDF.
+
+        .. versionadded:: 1.10.0
+        """
+        return self._j_catalog_function.isGeneric()
+
+    def get_function_language(self):
+        """
+        Get the language used for the function definition.
+
+        :return: the language type of the function definition
+
+        .. versionadded:: 1.10.0
+        """
+        return self._j_catalog_function.getFunctionLanguage()
 
 
 class ObjectPath(object):

@@ -21,8 +21,7 @@ package org.apache.flink.table.planner.plan.stream.sql
 import org.apache.flink.api.common.typeinfo.TypeInformation
 import org.apache.flink.api.java.typeutils.GenericTypeInfo
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.ValidationException
-import org.apache.flink.table.api.scala._
+import org.apache.flink.table.api._
 import org.apache.flink.table.planner.plan.utils.NonPojo
 import org.apache.flink.table.planner.utils.TableTestBase
 
@@ -124,5 +123,10 @@ class SetOperatorsTest extends TableTestBase {
         new GenericTypeInfo(classOf[NonPojo])),
       Array("a", "b"))
     util.verifyPlan("SELECT a FROM A UNION ALL SELECT b FROM A")
+  }
+
+  @Test
+  def testIntersectWithOuterProject(): Unit = {
+    util.verifyPlan("SELECT a FROM (SELECT a, b FROM T1 INTERSECT SELECT d, e FROM T2)")
   }
 }

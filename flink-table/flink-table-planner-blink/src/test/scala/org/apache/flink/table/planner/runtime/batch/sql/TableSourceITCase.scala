@@ -18,13 +18,10 @@
 
 package org.apache.flink.table.planner.runtime.batch.sql
 
-import org.apache.flink.api.common.typeinfo.TypeInformation
-import org.apache.flink.api.java.typeutils.RowTypeInfo
-import org.apache.flink.table.api.{DataTypes, TableSchema, Types}
+import org.apache.flink.table.planner.factories.TestValuesTableFactory
 import org.apache.flink.table.planner.runtime.utils.BatchTestBase.row
 import org.apache.flink.table.planner.runtime.utils.{BatchTestBase, TestData}
-import org.apache.flink.table.planner.utils.{TestDataTypeTableSource, TestFilterableTableSource, TestInputFormatTableSource, TestNestedProjectableTableSource, TestPartitionableTableSource, TestProjectableTableSource, TestTableSources}
-import org.apache.flink.table.runtime.types.TypeInfoDataTypeConverter
+import org.apache.flink.table.planner.utils._
 import org.apache.flink.types.Row
 
 import org.junit.{Before, Test}
@@ -37,17 +34,36 @@ class TableSourceITCase extends BatchTestBase {
   override def before(): Unit = {
     super.before()
     env.setParallelism(1) // set sink parallelism to 1
-    val tableSchema = TableSchema.builder().fields(
-      Array("a", "b", "c"),
-      Array(DataTypes.INT(), DataTypes.BIGINT(), DataTypes.STRING())).build()
-    tEnv.registerTableSource("MyTable", new TestProjectableTableSource(
-      true,
-      tableSchema,
-      new RowTypeInfo(
-        tableSchema.getFieldDataTypes.map(TypeInfoDataTypeConverter.fromDataTypeToTypeInfo),
-        tableSchema.getFieldNames),
-      TestData.smallData3)
-    )
+    val myTableDataId = TestValuesTableFactory.registerData(TestData.smallData3)
+    tEnv.executeSql(
+      s"""
+        |CREATE TABLE MyTable (
+        |  `a` INT,
+        |  `b` BIGINT,
+        |  `c` STRING
+        |) WITH (
+        |  'connector' = 'values',
+        |  'data-id' = '$myTableDataId',
+        |  'bounded' = 'true'
+        |)
+        |""".stripMargin)
+
+    val filterableTableDataId = TestValuesTableFactory.registerData(
+      TestFilterableTableSource.defaultRows)
+    // TODO: [FLINK-17425] support filter pushdown for TestValuesTableSource
+    tEnv.executeSql(
+      s"""
+         |CREATE TABLE FilterableTable (
+         |  name STRING,
+         |  id BIGINT,
+         |  amount INT,
+         |  price DOUBLE
+         |) WITH (
+         |  'connector' = 'values',
+         |  'data-id' = '$filterableTableDataId',
+         |  'bounded' = 'true'
+         |)
+         |""".stripMargin)
   }
 
   @Test
@@ -94,32 +110,27 @@ class TableSourceITCase extends BatchTestBase {
         Row.of("Betty", new JInt(30000)),
         "Liz"))
 
-    val nested1 = new RowTypeInfo(
-      Array(Types.STRING, Types.INT).asInstanceOf[Array[TypeInformation[_]]],
-      Array("name", "value")
-    )
+    val dataId = TestValuesTableFactory.registerData(data)
 
-    val nested2 = new RowTypeInfo(
-      Array(Types.INT, Types.BOOLEAN).asInstanceOf[Array[TypeInformation[_]]],
-      Array("num", "flag")
-    )
-
-    val deepNested = new RowTypeInfo(
-      Array(nested1, nested2).asInstanceOf[Array[TypeInformation[_]]],
-      Array("nested1", "nested2")
-    )
-
-    val tableSchema = new TableSchema(
-      Array("id", "deepNested", "nested", "name"),
-      Array(Types.LONG, deepNested, nested1, Types.STRING))
-
-    val returnType = new RowTypeInfo(
-      Array(Types.LONG, deepNested, nested1, Types.STRING).asInstanceOf[Array[TypeInformation[_]]],
-      Array("id", "deepNested", "nested", "name"))
-
-    tEnv.registerTableSource(
-      "T",
-      new TestNestedProjectableTableSource(true, tableSchema, returnType, data))
+    // TODO: [FLINK-17428] support nested project for TestValuesTableSource
+    val ddl =
+      s"""
+         |CREATE TABLE T (
+         |  id BIGINT,
+         |  deepNested ROW<
+         |     nested1 ROW<name STRING, `value` INT>,
+         |     nested2 ROW<num INT, flag BOOLEAN>
+         |   >,
+         |   nested ROW<name STRING, `value` INT>,
+         |   name STRING,
+         |   lower_name AS LOWER(name)
+         |) WITH (
+         |  'connector' = 'values',
+         |  'data-id' = '$dataId',
+         |  'bounded' = 'true'
+         |)
+         |""".stripMargin
+    tEnv.executeSql(ddl)
 
     checkResult(
       """
@@ -127,19 +138,19 @@ class TableSourceITCase extends BatchTestBase {
         |    deepNested.nested1.name AS nestedName,
         |    nested.`value` AS nestedValue,
         |    deepNested.nested2.flag AS nestedFlag,
-        |    deepNested.nested2.num AS nestedNum
+        |    deepNested.nested2.num AS nestedNum,
+        |    lower_name
         |FROM T
       """.stripMargin,
-      Seq(row(1, "Sarah", 10000, true, 1000),
-        row(2, "Rob", 20000, false, 2000),
-        row(3, "Mike", 30000, true, 3000)
+      Seq(row(1, "Sarah", 10000, true, 1000, "mary"),
+        row(2, "Rob", 20000, false, 2000, "bob"),
+        row(3, "Mike", 30000, true, 3000, "liz")
       )
     )
   }
 
   @Test
   def testTableSourceWithFilterable(): Unit = {
-    tEnv.registerTableSource("FilterableTable", TestFilterableTableSource(true))
     checkResult(
       "SELECT id, name FROM FilterableTable WHERE amount > 4 AND price < 9",
       Seq(
@@ -151,68 +162,33 @@ class TableSourceITCase extends BatchTestBase {
   }
 
   @Test
-  def testTableSourceWithPartitionable(): Unit = {
-    tEnv.registerTableSource("PartitionableTable", new TestPartitionableTableSource(true))
+  def testTableSourceWithFunctionFilterable(): Unit = {
     checkResult(
-      "SELECT * FROM PartitionableTable WHERE part2 > 1 and id > 2 AND part1 = 'A'",
-      Seq(row(3, "John", "A", 2), row(4, "nosharp", "A", 2))
-    )
-  }
-
-  @Test
-  def testCsvTableSource(): Unit = {
-    val csvTable = TestTableSources.getPersonCsvTableSource
-    tEnv.registerTableSource("csvTable", csvTable)
-    checkResult(
-      "SELECT id, `first`, `last`, score FROM csvTable",
+      "SELECT id, name FROM FilterableTable " +
+        "WHERE amount > 4 AND price < 9 AND upper(name) = 'RECORD_5'",
       Seq(
-        row(1, "Mike", "Smith", 12.3),
-        row(2, "Bob", "Taylor", 45.6),
-        row(3, "Sam", "Miller", 7.89),
-        row(4, "Peter", "Smith", 0.12),
-        row(5, "Liz", "Williams", 34.5),
-        row(6, "Sally", "Miller", 6.78),
-        row(7, "Alice", "Smith", 90.1),
-        row(8, "Kelly", "Williams", 2.34)
-      )
-    )
-  }
-
-  @Test
-  def testLookupJoinCsvTemporalTable(): Unit = {
-    val orders = TestTableSources.getOrdersCsvTableSource
-    val rates = TestTableSources.getRatesCsvTableSource
-    tEnv.registerTableSource("orders", orders)
-    tEnv.registerTableSource("rates", rates)
-
-    val sql =
-      """
-        |SELECT o.amount, o.currency, r.rate
-        |FROM (SELECT *, PROCTIME() as proc FROM orders) AS o
-        |JOIN rates FOR SYSTEM_TIME AS OF o.proc AS r
-        |ON o.currency = r.currency
-      """.stripMargin
-
-    checkResult(
-      sql,
-      Seq(
-        row(2, "Euro", 119),
-        row(1, "US Dollar", 102),
-        row(50, "Yen", 1),
-        row(3, "Euro", 119),
-        row(5, "US Dollar", 102)
-      )
+        row(5, "Record_5"))
     )
   }
 
   @Test
   def testInputFormatSource(): Unit = {
-    val tableSchema = TableSchema.builder().fields(
-      Array("a", "b", "c"),
-      Array(DataTypes.INT(), DataTypes.BIGINT(), DataTypes.STRING())).build()
-    val tableSource = new TestInputFormatTableSource(
-      tableSchema, tableSchema.toRowType, TestData.smallData3)
-    tEnv.registerTableSource("MyInputFormatTable", tableSource)
+    val dataId = TestValuesTableFactory.registerData(TestData.smallData3)
+    tEnv.executeSql(
+      s"""
+         |CREATE TABLE MyInputFormatTable (
+         |  `a` INT,
+         |  `b` BIGINT,
+         |  `c` STRING
+         |) WITH (
+         |  'connector' = 'values',
+         |  'data-id' = '$dataId',
+         |  'bounded' = 'true',
+         |  'runtime-source' = 'InputFormat'
+         |)
+         |""".stripMargin
+    )
+
     checkResult(
       "SELECT a, c FROM MyInputFormatTable",
       Seq(
@@ -223,28 +199,59 @@ class TableSourceITCase extends BatchTestBase {
   }
 
   @Test
-  def testDecimalSource(): Unit = {
-    val tableSchema = TableSchema.builder().fields(
-      Array("a", "b", "c", "d"),
-      Array(
-        DataTypes.INT(),
-        DataTypes.DECIMAL(5, 2),
-        DataTypes.VARCHAR(5),
-        DataTypes.CHAR(5))).build()
-    val tableSource = new TestDataTypeTableSource(
-      tableSchema,
-      Seq(
-        row(1, new java.math.BigDecimal(5.1), "1", "1"),
-        row(2, new java.math.BigDecimal(6.1), "12", "12"),
-        row(3, new java.math.BigDecimal(7.1), "123", "123")
-      ))
-    tEnv.registerTableSource("MyInputFormatTable", tableSource)
+  def testAllDataTypes(): Unit = {
+    val dataId = TestValuesTableFactory.registerData(TestData.fullDataTypesData)
+    tEnv.executeSql(
+      s"""
+         |CREATE TABLE T (
+         |  `a` BOOLEAN,
+         |  `b` TINYINT,
+         |  `c` SMALLINT,
+         |  `d` INT,
+         |  `e` BIGINT,
+         |  `f` FLOAT,
+         |  `g` DOUBLE,
+         |  `h` DECIMAL(5, 2),
+         |  `i` VARCHAR(5),
+         |  `j` CHAR(5),
+         |  `k` DATE,
+         |  `l` TIME(0),
+         |  `m` TIMESTAMP(9),
+         |  `n` TIMESTAMP(9) WITH LOCAL TIME ZONE,
+         |  `o` ARRAY<BIGINT>,
+         |  `p` ROW<f1 BIGINT, f2 STRING, f3 DOUBLE>,
+         |  `q` MAP<STRING, INT>
+         |) WITH (
+         |  'connector' = 'values',
+         |  'data-id' = '$dataId',
+         |  'bounded' = 'true'
+         |)
+         |""".stripMargin
+    )
+
     checkResult(
-      "SELECT a, b, c, d FROM MyInputFormatTable",
+      "SELECT * FROM T",
       Seq(
-        row(1, "5.10", "1", "1"),
-        row(2, "6.10", "12", "12"),
-        row(3, "7.10", "123", "123"))
+        row(
+          true, 127, 32767, 2147483647, 9223372036854775807L, "-1.123", "-1.123", "5.10",
+          1, 1, "1969-01-01", "00:00:00.123", "1969-01-01T00:00:00.123456789",
+          "1969-01-01T00:00:00.123456789Z", "[1, 2, 3]", row(1, "a", "2.3"), "{k1=1}"),
+        row(
+          false, -128, -32768, -2147483648, -9223372036854775808L, "3.4", "3.4", "6.10",
+          12, 12, "1970-09-30", "01:01:01.123", "1970-09-30T01:01:01.123456",
+          "1970-09-30T01:01:01.123456Z", "[4, 5]", row(null, "b", "4.56"), "{k2=2, k4=4}"),
+        row(
+          true, 0, 0, 0, 0, "0.12", "0.12", "7.10",
+          123, 123, "1990-12-24", "08:10:24.123", "1990-12-24T08:10:24.123",
+          "1990-12-24T08:10:24.123Z", "[6, null, 7]", row(3, null, "7.86"), "{k3=null}"),
+        row(
+          false, 5, 4, 123, 1234, "1.2345", "1.2345", "8.12",
+          1234, 1234, "2020-05-01", "23:23:23", "2020-05-01T23:23:23",
+          "2020-05-01T23:23:23Z", "[8]", row(4, "c", null), "{null=3}"),
+        row(
+          null, null, null, null, null, null, null, null, null, null, null, null, null,
+          null, null, null, null)
+      )
     )
   }
 }

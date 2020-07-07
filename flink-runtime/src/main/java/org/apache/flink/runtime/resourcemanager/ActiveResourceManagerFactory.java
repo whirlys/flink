@@ -19,19 +19,16 @@
 package org.apache.flink.runtime.resourcemanager;
 
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.configuration.ConfigurationUtils;
 import org.apache.flink.configuration.TaskManagerOptions;
-import org.apache.flink.runtime.clusterframework.ContaineredTaskManagerParameters;
+import org.apache.flink.runtime.clusterframework.TaskExecutorProcessUtils;
 import org.apache.flink.runtime.clusterframework.types.ResourceID;
 import org.apache.flink.runtime.clusterframework.types.ResourceIDRetrievable;
 import org.apache.flink.runtime.entrypoint.ClusterInformation;
 import org.apache.flink.runtime.heartbeat.HeartbeatServices;
 import org.apache.flink.runtime.highavailability.HighAvailabilityServices;
 import org.apache.flink.runtime.metrics.MetricRegistry;
-import org.apache.flink.runtime.metrics.groups.JobManagerMetricGroup;
 import org.apache.flink.runtime.rpc.FatalErrorHandler;
 import org.apache.flink.runtime.rpc.RpcService;
-import org.apache.flink.runtime.taskexecutor.TaskManagerServices;
 
 import javax.annotation.Nullable;
 
@@ -44,7 +41,7 @@ import javax.annotation.Nullable;
  *
  * @param <T> type of the {@link ResourceIDRetrievable}
  */
-public abstract class ActiveResourceManagerFactory<T extends ResourceIDRetrievable> implements ResourceManagerFactory<T> {
+public abstract class ActiveResourceManagerFactory<T extends ResourceIDRetrievable> extends ResourceManagerFactory<T> {
 
 	@Override
 	public ResourceManager<T> createResourceManager(
@@ -53,45 +50,29 @@ public abstract class ActiveResourceManagerFactory<T extends ResourceIDRetrievab
 			RpcService rpcService,
 			HighAvailabilityServices highAvailabilityServices,
 			HeartbeatServices heartbeatServices,
-			MetricRegistry metricRegistry,
 			FatalErrorHandler fatalErrorHandler,
 			ClusterInformation clusterInformation,
 			@Nullable String webInterfaceUrl,
-			JobManagerMetricGroup jobManagerMetricGroup) throws Exception {
-		return createActiveResourceManager(
+			MetricRegistry metricRegistry,
+			String hostname) throws Exception {
+		return super.createResourceManager(
 			createActiveResourceManagerConfiguration(configuration),
 			resourceId,
 			rpcService,
 			highAvailabilityServices,
 			heartbeatServices,
-			metricRegistry,
 			fatalErrorHandler,
 			clusterInformation,
 			webInterfaceUrl,
-			jobManagerMetricGroup);
+			metricRegistry,
+			hostname);
 	}
 
-	public static Configuration createActiveResourceManagerConfiguration(Configuration originalConfiguration) {
-		final int taskManagerMemoryMB = ConfigurationUtils.getTaskManagerHeapMemory(originalConfiguration).getMebiBytes();
-		final long cutoffMB = ContaineredTaskManagerParameters.calculateCutoffMB(originalConfiguration, taskManagerMemoryMB);
-		final long processMemoryBytes = (taskManagerMemoryMB - cutoffMB) << 20; // megabytes to bytes
-		final long managedMemoryBytes = TaskManagerServices.getManagedMemoryFromProcessMemory(originalConfiguration, processMemoryBytes);
-
-		final Configuration resourceManagerConfig = new Configuration(originalConfiguration);
-		resourceManagerConfig.setString(TaskManagerOptions.MANAGED_MEMORY_SIZE, managedMemoryBytes + "b");
-
-		return resourceManagerConfig;
+	private Configuration createActiveResourceManagerConfiguration(Configuration originalConfiguration) {
+		final Configuration copiedConfig = new Configuration(originalConfiguration);
+		// In active mode, it's depend on the ResourceManager to set the ResourceID of TaskManagers.
+		copiedConfig.removeConfig(TaskManagerOptions.TASK_MANAGER_RESOURCE_ID);
+		return TaskExecutorProcessUtils.getConfigurationMapLegacyTaskManagerHeapSizeToConfigOption(
+			copiedConfig, TaskManagerOptions.TOTAL_PROCESS_MEMORY);
 	}
-
-	protected abstract ResourceManager<T> createActiveResourceManager(
-		Configuration configuration,
-		ResourceID resourceId,
-		RpcService rpcService,
-		HighAvailabilityServices highAvailabilityServices,
-		HeartbeatServices heartbeatServices,
-		MetricRegistry metricRegistry,
-		FatalErrorHandler fatalErrorHandler,
-		ClusterInformation clusterInformation,
-		@Nullable String webInterfaceUrl,
-		JobManagerMetricGroup jobManagerMetricGroup) throws Exception;
 }

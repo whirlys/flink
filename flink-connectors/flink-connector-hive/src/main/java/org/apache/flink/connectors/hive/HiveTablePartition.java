@@ -21,7 +21,10 @@ package org.apache.flink.connectors.hive;
 import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
 
 import java.io.Serializable;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Properties;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
@@ -39,9 +42,17 @@ public class HiveTablePartition implements Serializable {
 	/** The map of partition key names and their values. */
 	private final Map<String, Object> partitionSpec;
 
-	public HiveTablePartition(StorageDescriptor storageDescriptor, Map<String, Object> partitionSpec) {
+	// Table properties that should be used to initialize SerDe
+	private final Properties tableProps;
+
+	public HiveTablePartition(StorageDescriptor storageDescriptor, Properties tableProps) {
+		this(storageDescriptor, new LinkedHashMap<>(), tableProps);
+	}
+
+	public HiveTablePartition(StorageDescriptor storageDescriptor, Map<String, Object> partitionSpec, Properties tableProps) {
 		this.storageDescriptor = checkNotNull(storageDescriptor, "storageDescriptor can not be null");
-		this.partitionSpec = partitionSpec;
+		this.partitionSpec = checkNotNull(partitionSpec, "partitionSpec can not be null");
+		this.tableProps = checkNotNull(tableProps, "tableProps can not be null");
 	}
 
 	public StorageDescriptor getStorageDescriptor() {
@@ -50,5 +61,37 @@ public class HiveTablePartition implements Serializable {
 
 	public Map<String, Object> getPartitionSpec() {
 		return partitionSpec;
+	}
+
+	public Properties getTableProps() {
+		return tableProps;
+	}
+
+	@Override
+	public boolean equals(Object o) {
+		if (this == o) {
+			return true;
+		}
+		if (o == null || getClass() != o.getClass()) {
+			return false;
+		}
+		HiveTablePartition that = (HiveTablePartition) o;
+		return Objects.equals(storageDescriptor, that.storageDescriptor) &&
+				Objects.equals(partitionSpec, that.partitionSpec) &&
+				Objects.equals(tableProps, that.tableProps);
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(storageDescriptor, partitionSpec, tableProps);
+	}
+
+	@Override
+	public String toString() {
+		return "HiveTablePartition{" +
+				"storageDescriptor=" + storageDescriptor +
+				", partitionSpec=" + partitionSpec +
+				", tableProps=" + tableProps +
+				'}';
 	}
 }

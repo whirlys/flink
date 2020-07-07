@@ -24,7 +24,7 @@ import org.apache.flink.api.common.typeinfo.TypeInformation
 import org.apache.flink.api.common.typeutils.TypeSerializer
 import org.apache.flink.api.java.io.CollectionInputFormat
 import org.apache.flink.streaming.api.datastream.DataStream
-import org.apache.flink.table.api.internal.TableEnvironmentImpl
+import org.apache.flink.table.api.internal.{TableEnvironmentImpl, TableEnvironmentInternal}
 import org.apache.flink.table.api.{Table, TableEnvironment}
 import org.apache.flink.table.expressions.ExpressionParser
 import org.apache.flink.table.planner.delegation.PlannerBase
@@ -45,9 +45,7 @@ object BatchTableEnvUtil {
       tEnv: TableEnvironment,
       table: Table,
       sink: CollectTableSink[T],
-      jobName: Option[String],
-      builtInCatalogName: String,
-      builtInDBName: String): Seq[T] = {
+      jobName: Option[String]): Seq[T] = {
     val typeSerializer = fromDataTypeToLegacyInfo(sink.getConsumedDataType)
       .asInstanceOf[TypeInformation[T]]
       .createSerializer(tEnv.asInstanceOf[TableEnvironmentImpl]
@@ -55,10 +53,9 @@ object BatchTableEnvUtil {
     val id = new AbstractID().toString
     sink.init(typeSerializer.asInstanceOf[TypeSerializer[T]], id)
     val sinkName = UUID.randomUUID().toString
-    tEnv.registerTableSink(sinkName, sink)
-    tEnv.insertInto(table, builtInCatalogName, builtInDBName, sinkName)
+    tEnv.asInstanceOf[TableEnvironmentInternal].registerTableSinkInternal(sinkName, sink)
 
-    val res = tEnv.execute("test")
+    val res = TableEnvUtil.execInsertTableAndWaitResult(table, s"`$sinkName`")
     val accResult: JArrayList[Array[Byte]] = res.getAccumulatorResult(id)
     SerializedListAccumulator.deserializeList(accResult, typeSerializer)
   }
@@ -249,7 +246,7 @@ object BatchTableEnvUtil {
       fieldNullables: Option[Array[Boolean]],
       statistic: Option[FlinkStatistic]): Unit = {
     val fields = fieldNames.map((f: Array[String]) => f.map(ExpressionParser.parseExpression))
-    TableTestUtil.registerDataStream(
+    TableTestUtil.createTemporaryView(
       tEnv,
       name,
       boundedStream,
@@ -279,7 +276,7 @@ object BatchTableEnvUtil {
     boundedStream.setParallelism(1)
     val name = if (tableName == null) UUID.randomUUID().toString else tableName
     registerBoundedStreamInternal(tEnv, name, boundedStream, Option(fieldNames), None, statistic)
-    tEnv.scan(name)
+    tEnv.from("`" + name + "`")
   }
 
   /**

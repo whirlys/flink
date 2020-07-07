@@ -24,8 +24,8 @@ under the License.
 -->
 
 <div class="alert alert-info" markdown="span">
-The `BucketingSink` has been **deprecated since Flink 1.9** and will be removed in subsequent releases.
-Please use the [__StreamingFileSink__]({{site.baseurl}}/dev/connectors/streamfile_sink.html) instead.
+`BucketingSink` 从 **Flink 1.9** 开始已经被废弃，并会在后续的版本中删除。请使用
+[__StreamingFileSink__]({{site.baseurl}}/zh/dev/connectors/streamfile_sink.html)。
 </div>
 
 这个连接器可以向所有 [Hadoop FileSystem](http://hadoop.apache.org) 支持的文件系统写入分区文件。
@@ -39,7 +39,7 @@ Please use the [__StreamingFileSink__]({{site.baseurl}}/dev/connectors/streamfil
 </dependency>
 {% endhighlight %}
 
-注意连接器目前还不是二进制发行版的一部分，添加依赖、打包配置以及集群运行信息请参考 [这里]({{site.baseurl}}/zh/dev/projectsetup/dependencies.html)。
+注意连接器目前还不是二进制发行版的一部分，添加依赖、打包配置以及集群运行信息请参考 [这里]({{site.baseurl}}/zh/dev/project-configuration.html)。
 
 #### 分桶文件 Sink
 

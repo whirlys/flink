@@ -19,6 +19,8 @@
 package org.apache.flink.table.utils;
 
 import org.apache.flink.api.dag.Transformation;
+import org.apache.flink.table.api.ExplainDetail;
+import org.apache.flink.table.delegation.Parser;
 import org.apache.flink.table.delegation.Planner;
 import org.apache.flink.table.operations.ModifyOperation;
 import org.apache.flink.table.operations.Operation;
@@ -31,8 +33,8 @@ import java.util.List;
 public class PlannerMock implements Planner {
 
 	@Override
-	public List<Operation> parse(String statement) {
-		return null;
+	public Parser getParser() {
+		return new ParserMock();
 	}
 
 	@Override
@@ -41,7 +43,7 @@ public class PlannerMock implements Planner {
 	}
 
 	@Override
-	public String explain(List<Operation> operations, boolean extended) {
+	public String explain(List<Operation> operations, ExplainDetail... extraDetails) {
 		return null;
 	}
 

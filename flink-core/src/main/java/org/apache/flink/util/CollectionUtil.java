@@ -20,14 +20,20 @@ package org.apache.flink.util;
 
 import org.apache.flink.annotation.Internal;
 
+import javax.annotation.Nullable;
+
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.stream.Stream;
+
+import static java.util.stream.Collectors.toList;
 
 /**
  * Simple utility to work with Java collections.
@@ -71,5 +77,26 @@ public final class CollectionUtil {
 		}
 
 		return buckets.values();
+	}
+
+	public static <I, O> Collection<O> project(Collection<I> collection, Function<I, O> projector) {
+		return collection
+			.stream()
+			.map(projector)
+			.collect(toList());
+	}
+
+	/**
+	 * Collects the elements in the Iterable in a List. If the iterable argument is null,
+	 * this method returns an empty list.
+	 */
+	public static <E> List<E> iterableToList(@Nullable Iterable<E> iterable) {
+		if (iterable == null) {
+			return Collections.emptyList();
+		}
+
+		final ArrayList<E> list = new ArrayList<>();
+		iterable.iterator().forEachRemaining(list::add);
+		return list;
 	}
 }
